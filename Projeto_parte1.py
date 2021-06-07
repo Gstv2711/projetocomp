@@ -13,11 +13,11 @@ filmes = pd.read_csv("movies_metadata.csv")
 creditos = pd.read_csv("credits.csv")
 palavraschaves = pd.read_csv("keywords.csv")
 
+filmes = filmes[["id", "title", "genres","vote_average", "vote_count"]]
 
-filmes = filmes[["id", "title", "genres"]]
 
-# Função de limpar os ID's
 
+#Função de limpar os ID's
 def limpa_id(x):
     try:
         return int(x)
@@ -25,25 +25,22 @@ def limpa_id(x):
     except:
         return np.nan
 
-
-
 filmes['id'] = filmes['id'].apply(limpa_id)
 filmes = filmes[filmes['id'].notnull()]
-
 
 filmes['id'] = filmes['id'].astype('int')
 palavraschaves['id'] = palavraschaves['id']
 creditos['id'] = creditos['id'].astype('int')
 
 
-# Juntando através do id
 
+# Juntando através do id
 filmes1 = filmes.merge(creditos, on="id")
 filmes2 = filmes1.merge(palavraschaves, on="id")
 
 
-# aplicando literal_eval para fazer string -> objetos.
 
+# Aplicando literal_eval para fazer string -> objetos.
 filmes2['genres'] = filmes2['genres'].apply(literal_eval)
 filmes2['cast'] = filmes2['cast'].apply(literal_eval)
 filmes2['crew'] = filmes2['crew'].apply(literal_eval)
@@ -51,33 +48,48 @@ filmes2['keywords'] = filmes2['keywords'].apply(literal_eval)
 
 
 
-# pegando o nome dos generos associados
+# Pegando o nome dos diretores associados
 filmes2['crew'] = filmes2['crew'].apply(lambda x: [i['name'].lower() for i in x if i['job'] == 'Director'])
 
 
-# juntando com as palavras chaves
 
 df = filmes2
 
 
-#print(df.head())
 
+#Aplicando filtro de filmes mais relevantes
+vote = df[df["vote_count"].notnull()]["vote_count"].astype('float')
+avg = df[df["vote_average"].notnull()]["vote_average"].astype('float')
+C = avg.mean()
+m = vote.quantile(0.60)
+qualified = df[(df['vote_count'] >= m) & (df['vote_count'].notnull()) & (df['vote_average'].notnull())]
+
+def imdb_qualified(x):
+    v = x["vote_count"]
+    R = x["vote_average"]
+    return (v/(v+m) * R) + (m/(m+v) * C)
+
+qualified['wr'] = qualified.apply(imdb_qualified, axis = 1)
+df = qualified[["id", "title", "genres", "cast", "crew", "keywords"]]
+
+
+
+# Colocando tudo em letra minúscula
 df["genres"] = df["genres"].apply(lambda x: [i["name"].lower() for i in x])
 df["cast"] = df["cast"].apply(lambda x: [i["name"].lower() for i in x])
 df["keywords"] = df["keywords"].apply(lambda x: [i["name"].lower() for i in x])
 
 
 
-#pegando até 3 caracteristicas de cada filme
-# se pegarmos muitas caracteristicas pode aumentar demais a complexidade do algortimo
-
+# Pegando até 3 caracteristicas de cada filme
+# Se pegarmos muitas caracteristicas pode aumentar demais a complexidade do algortimo
 df["genres"] = df["genres"].apply(lambda x: x[:3] if len(x)>3 else x)
 df["cast"] = df["cast"].apply(lambda x: x[:3] if len(x)>3 else x)
 df["keywords"] = df["keywords"].apply(lambda x: x[:3] if len(x)>3 else x)
 
 
-#removendo os espaços
 
+#Removendo os espaços
 df["cast"] = df["cast"].apply(lambda x: [i.replace(" ","") for i in x])
 df["crew"] = df["crew"].apply(lambda x: [i.replace(" ","") for i in x])
 df["keywords"] = df["keywords"].apply(lambda x: [i.replace(" ","") for i in x])
@@ -85,54 +97,28 @@ df["genres"] = df["genres"].apply(lambda x: [i.replace(" ","") for i in x])
 
 
 
+#Removendo filmes com nomes repetidos
+df = df.drop_duplicates(subset='title', keep='first')
+
+
 
 #Transformando tudo em uma coluna só
-
 df["metadata"] = df.apply(lambda x : " ".join(x["genres"]) + " "  + " ".join(x["cast"]) + " " + " ".join(x["crew"]) + " " + " ".join(x["keywords"]), axis = 1)
+df_metadata = df.iloc[:10000, 6]
 
-df_metadata = df.iloc[:5000, 6]
-
-
-
-#Usando cosseno de similaridade para achar a semelhança entre dois filmes
-
-cv = CountVectorizer(stop_words = 'english')
-
-contador_matrix = cv.fit_transform(df_metadata)
-
-cosseno_sim_matrix = cosine_similarity(contador_matrix)
 
 
 #Mapeando a função
-
-mapear = pd.Series(df_metadata.index, index = df.iloc[:5000, 1])
+mapear = pd.Series(df_metadata.index, index = df.iloc[:10000, 1])
 
 
 
 # Funcao de recomendacao de acordo com nossos metadados
-
 def sistema(filmes_input):
-    filme_indexado = mapear[filmes_input]
-
-    # obtendo os valores similares
-
-    score = list(enumerate(cosseno_sim_matrix[filme_indexado]))
-
-    score = sorted(score, key=lambda x: x[1], reverse=True)
-
-    # Amostra de 20 filmes
-
-    score = score[1:20]
-
-    indices = [i[0] for i in score]
-
-    return (mapear.iloc[indices])
-
-
-def sistema2(filmes_input):
+    '''list -> list'''
     # "Somando os filmes"
-    #indice depende do tamanho do dataframe
-    indice = 20000
+    # indice depende do tamanho do dataframe
+    indice = 15468
     df_metadata[indice] = ' '
     for filme in filmes_input:
         df_metadata[indice] += ' ' + df_metadata[mapear[filme]]
@@ -145,19 +131,16 @@ def sistema2(filmes_input):
     # Resetando a soma de filmes
     df_metadata[indice] = ' '
 
-    # obtendo os valores similares
-
-    score = list(enumerate(cosseno_sim_matrix[indice]))
+    # Obtendo os valores similares
+    score = list(enumerate(cosseno_sim_matrix[10000]))
     score = sorted(score, key=lambda x: x[1], reverse=True)
 
-    # Amostra de 20 filmes
-
+    # Amostra de 10 filmes
     n_filmes = len(filmes_input)
-    score = score[(n_filmes + 1):20]
+    score = score[(n_filmes + 1):(n_filmes + 11)]
     indices = [i[0] for i in score]
 
-    # return (score)
-    return (mapear.iloc[indices])
+    # Transformando de pd.Series pra lista
+    lista_recomendada = mapear.iloc[indices].index.to_list()
 
-
-#Aplicar filtro de filmes mais relevantes
+    return (lista_recomendada)
